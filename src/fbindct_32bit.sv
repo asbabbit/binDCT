@@ -2,7 +2,6 @@
 module fbindct_32bit #(
   parameter IN_WIDTH = 32,
   parameter OUT_WIDTH = 32,
-  parameter INT_BITS = 20,
   parameter FRAC_BITS = 12
 )(
   input                                        clk,
@@ -63,7 +62,7 @@ end
 logic signed [OUT_WIDTH-1:0] a_reg [0:7];
 logic signed [OUT_WIDTH-1:0] a_wire [0:7];
 
-// Even stage butterfly virtual
+// Even stage butterfly operations
 assign a_wire[0] = x_reg[0] + x_reg[7];
 assign a_wire[1] = x_reg[1] + x_reg[6];
 assign a_wire[2] = x_reg[2] + x_reg[5];
