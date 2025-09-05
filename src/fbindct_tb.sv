@@ -11,7 +11,7 @@ reg srstn;
 reg signed [7:0] x_in_tb [0:7];
 
 // Wires for outputs
-wire signed [31:0] x_out_tb [0:7];
+wire signed [OUT_WIDTH-1:0] x_out_tb [0:7];
 
 // 2. Instantiate the module you want to test
 fbindct dut (

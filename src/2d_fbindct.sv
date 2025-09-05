@@ -2,16 +2,16 @@ module 2d_fbindct(
     input clk,
     input rst,
     input [7:0] blk_in [7:0][7:0],
-    output [31:0] coef_out [7:0][7:0]
+    output [OUT_WIDTH-1:0] coef_out [7:0][7:0]
   );
 
   wire done;
   wire start;
   reg [2:0] cnt;
   reg [7:0] blk_reg [7:0][7:0];
-  reg [31:0] coef_reg [7:0][7:0];
+  reg [OUT_WIDTH-1:0] coef_reg [7:0][7:0];
   reg [7:0] blk_vec_reg [7:0];
-  reg [31:0] coef_vec_reg [7:0];
+  reg [OUT_WIDTH-1:0] coef_vec_reg [7:0];
 
   //TODO: Find the sweet spot between sequential and parralelism of DCTs per
   //image or 
