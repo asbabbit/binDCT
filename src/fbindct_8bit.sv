@@ -1,66 +1,90 @@
 `timescale 1ns / 1ps
 module fbindct_8bit #(
-  parameter IN_WIDTH = 8,
-  parameter INT_BITS = 4,
-  parameter FRAC_BITS = 6,
-  parameter OUT_WIDTH = IN_WIDTH + INT_BITS + FRAC_BITS
+  parameter IN_WIDTH = 8,                                 // Data input size for Y,Cb,Cr values
+  parameter INT_BITS = 4,                                 // Bits needed to prevent overflow
+  parameter FRAC_BITS = 6,                                // Bits needed for shifting
+  parameter INTER_WIDTH = IN_WIDTH + INT_BITS + FRAC_BITS,// Intermediate width of wires
+  parameter OUT_WIDTH = 20                                // Output width may need shortening due to hardware constraints
 )(
   input                                        clk,
   input                                        rst,
   input signed [IN_WIDTH-1:0]                  x_in [7:0],
-  input                                        valid_in,
+  input                                        ready_in,
 
   output                                       valid_out,
   output signed [OUT_WIDTH-1:0]                y_out [7:0]
 );
 
-// State machine
+// Stage machine
 typedef enum logic [2:0] {
-  STAGE0 = 3'b000,
-  STAGE1 = 3'b001, 
-  STAGE2 = 3'b010,
-  STAGE3 = 3'b011,
-  STAGE4 = 3'b100
-} state_t;
+  STAGE1 = 2'b00,
+  STAGE2 = 2'b01, 
+  STAGE3 = 2'b10,
+  STAGE4 = 2'b11
+} stage_t;
+stage_t stage;
 
-state_t state, next_state;
-
-always_ff @(posedge clk) begin : state_machine_seq 
-  if(rst) begin
-    state <= STAGE0;
+// Stage logic
+always_ff @(posedge clk) begin : stage_machine
+  if (rst) begin
+    stage <= STAGE0;
   end else begin
-    state <= next_state;
+    case (stage)
+      STAGE0: stage <= STAGE1;
+      STAGE1: stage <= STAGE2;
+      STAGE2: stage <= STAGE3;
+      STAGE3: stage <= STAGE4;
+      STAGE4: stage <= STAGE0;
+      default : 
+    endcase
   end
 end
 
-always_comb begin : state_machine_comb
-  case (state)
-    STAGE0: next_state = (valid_in) ? STAGE1 : STAGE0;
-    STAGE1: next_state = STAGE2;
-    STAGE2: next_state = STAGE3;
-    STAGE3: next_state = STAGE4;
-    STAGE4: next_state = STAGE0;
-    default: next_state = STAGE0;
-  endcase
-end
 
+// FSM
+typedef enum logic [1:0] {
+  IDLE,
+  WAIT,
+  SEND
+} state_t;
+state_t state;
 
-// Stage 0
+// FSM logic
 logic signed [IN_WIDTH-1:0] x_reg [0:7];
+logic x_available;
 
-always_ff @(posedge clk) begin : stage0
+always_ff @(posedge clk) begin : state_machine
   if (rst) begin
+    state <= IDLE;
+    x_available <= 0;
     for (int i = 0; i<8; i++) begin
       x_reg[i] <= 0;
     end
-  end else if(valid_in && state == STAGE0) begin
-    x_reg <= x_in;
+  end else begin
+    case (state)
+      IDLE: begin
+        if(/*some trigger*/ 1'b1) begin
+          x_reg <= x_in;
+          x_available <= 1'b1;
+          state <= WAIT;
+        end
+      end
+      WAIT: begin
+
+      end
+      SEND: begin
+        if(valid_out && ready_in) begin
+          x_available <= 1'b0;
+        end
+      end
+      default :  
+    endcase
   end
 end
 
 // Stage 1
-logic signed [OUT_WIDTH-1:0] a_reg [0:7];
-logic signed [OUT_WIDTH-1:0] a_wire [0:7];
+logic signed [INTER_WIDTH-1:0] a_reg [0:7];
+logic signed [INTER_WIDTH-1:0] a_wire [0:7];
  
 // Even stage butterfly operations
 assign a_wire[0] = (x_reg[0] + x_reg[7]) << FRAC_BITS;
@@ -84,8 +108,8 @@ always_ff @(posedge clk) begin : stage1
 end
 
 // Stage 2 
-logic signed [OUT_WIDTH-1:0] b_reg [0:1];
-logic signed [OUT_WIDTH-1:0] b_wire [0:1];
+logic signed [INTER_WIDTH-1:0] b_reg [0:1];
+logic signed [INTER_WIDTH-1:0] b_wire [0:1];
 
 assign b_wire[0] = (a_reg[5]>>>2) + (a_reg[5]>>>3) + a_reg[6];            // 0.375*a5 + a6
 assign b_wire[1] = (b_wire[0]>>>1) + (b_wire[0]>>>3) - a_reg[5];          // 0.625*b0 - a5
@@ -101,8 +125,8 @@ always_ff @(posedge clk) begin : stage2
 end
 
 // Stage 3
-logic signed [OUT_WIDTH-1:0] c_reg [0:7];
-logic signed [OUT_WIDTH-1:0] c_wire [0:7];
+logic signed [INTER_WIDTH-1:0] c_reg [0:7];
+logic signed [INTER_WIDTH-1:0] c_wire [0:7];
 
 // More even and odd butterfly operations
 assign c_wire[0] = a_reg[0] + a_reg[3];
@@ -125,8 +149,8 @@ always_ff @(posedge clk) begin : stage3
 end
 
 // Stage 4
-logic signed [OUT_WIDTH-1:0] d_reg [0:6];
-logic signed [OUT_WIDTH-1:0] d_wire [0:6];
+logic signed [INTER_WIDTH-1:0] d_reg [0:6];
+logic signed [INTER_WIDTH-1:0] d_wire [0:6];
 
 assign d_wire[0] = c_reg[0] + c_reg[1];                                         // c0 + c1
 assign d_wire[1] = (d_wire[0]>>>1) - c_reg[1];                                  // 0.5*d0 - c1
@@ -147,7 +171,7 @@ always_ff @(posedge clk) begin : stage4
 end
 
 // Delay c_reg[7] by one clock cycle to arrive at same time as d_reg
-logic [OUT_WIDTH-1:0] c_reg7_delay;
+logic [INTER_WIDTH-1:0] c_reg7_delay;
 
 always_ff @(posedge clk) begin : delay_c_reg
   if (rst) begin
