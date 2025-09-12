@@ -1,20 +1,21 @@
 `timescale 1ns / 1ps
-module fbindct_32bit #(
-  parameter IN_WIDTH = 32,
-  parameter OUT_WIDTH = 32,
-  parameter FRAC_BITS = 12
+module fbindct_20bit #(
+  parameter IN_WIDTH = 20,                                // Data input size for Y,Cb,Cr values
+  parameter INT_BITS = 4,                                 // Bits needed to prevent overflow
+  parameter FRAC_BITS = 6,                                // Bits needed for shifting
+  parameter INTER_WIDTH = IN_WIDTH + INT_BITS + FRAC_BITS,// Intermediate width of wires
+  parameter OUT_WIDTH = 20                                // Due to hardware constraints, Q16.4
 )(
   input                                        clk,
   input                                        rst,
-  input signed [IN_WIDTH-1:0]                  x_in [0:7],
+  input signed [IN_WIDTH-1:0]                  x_in [7:0],
   input                                        valid_in,
 
   output                                       valid_out,
-  output signed [OUT_WIDTH-1:0]                y_out[0:7]
+  output signed [INTER_WIDTH-1:0]                y_out [7:0]
 );
 
 // State machine
-logic [2:0] state;
 typedef enum logic [2:0] {
   STAGE0 = 3'b000,
   STAGE1 = 3'b001, 
@@ -27,7 +28,7 @@ state_t state, next_state;
 
 always_ff @(posedge clk) begin : state_machine_seq 
   if(rst) begin
-    state <= 0;
+    state <= STAGE0;
   end else begin
     state <= next_state;
   end
@@ -46,7 +47,7 @@ end
 
 
 // Stage 0
-signed logic [IN_WIDTH-1:0] x_reg [0:7];
+logic signed [IN_WIDTH-1:0] x_reg [0:7];
 
 always_ff @(posedge clk) begin : stage0
   if (rst) begin
@@ -59,19 +60,19 @@ always_ff @(posedge clk) begin : stage0
 end
 
 // Stage 1
-logic signed [OUT_WIDTH-1:0] a_reg [0:7];
-logic signed [OUT_WIDTH-1:0] a_wire [0:7];
-
+logic signed [INTER_WIDTH-1:0] a_reg [0:7];
+logic signed [INTER_WIDTH-1:0] a_wire [0:7];
+ 
 // Even stage butterfly operations
-assign a_wire[0] = x_reg[0] + x_reg[7];
-assign a_wire[1] = x_reg[1] + x_reg[6];
-assign a_wire[2] = x_reg[2] + x_reg[5];
-assign a_wire[3] = x_reg[3] + x_reg[4];
+assign a_wire[0] = (x_reg[0] + x_reg[7]);
+assign a_wire[1] = (x_reg[1] + x_reg[6]);
+assign a_wire[2] = (x_reg[2] + x_reg[5]);
+assign a_wire[3] = (x_reg[3] + x_reg[4]);
 // Odd stage butterfly operations 
-assign a_wire[4] = x_reg[3] - x_reg[4];
-assign a_wire[5] = x_reg[2] - x_reg[5];
-assign a_wire[6] = x_reg[1] - x_reg[6];
-assign a_wire[7] = x_reg[0] - x_reg[7];
+assign a_wire[4] = (x_reg[3] - x_reg[4]);
+assign a_wire[5] = (x_reg[2] - x_reg[5]);
+assign a_wire[6] = (x_reg[1] - x_reg[6]);
+assign a_wire[7] = (x_reg[0] - x_reg[7]);
 
 always_ff @(posedge clk) begin : stage1
   if(rst) begin
@@ -84,8 +85,8 @@ always_ff @(posedge clk) begin : stage1
 end
 
 // Stage 2 
-logic signed [OUT_WIDTH-1:0] b_reg [0:1];
-logic signed [OUT_WIDTH-1:0] b_wire [0:1];
+logic signed [INTER_WIDTH-1:0] b_reg [0:1];
+logic signed [INTER_WIDTH-1:0] b_wire [0:1];
 
 assign b_wire[0] = (a_reg[5]>>>2) + (a_reg[5]>>>3) + a_reg[6];            // 0.375*a5 + a6
 assign b_wire[1] = (b_wire[0]>>>1) + (b_wire[0]>>>3) - a_reg[5];          // 0.625*b0 - a5
@@ -101,8 +102,8 @@ always_ff @(posedge clk) begin : stage2
 end
 
 // Stage 3
-logic signed [OUT_WIDTH-1:0] c_reg [0:7];
-logic signed [OUT_WIDTH-1:0] c_wire [0:7];
+logic signed [INTER_WIDTH-1:0] c_reg [0:7];
+logic signed [INTER_WIDTH-1:0] c_wire [0:7];
 
 // More even and odd butterfly operations
 assign c_wire[0] = a_reg[0] + a_reg[3];
@@ -125,8 +126,8 @@ always_ff @(posedge clk) begin : stage3
 end
 
 // Stage 4
-logic signed [OUT_WIDTH-1:0] d_reg [0:6];
-logic signed [OUT_WIDTH-1:0] d_wire [0:6];
+logic signed [INTER_WIDTH-1:0] d_reg [0:6];
+logic signed [INTER_WIDTH-1:0] d_wire [0:6];
 
 assign d_wire[0] = c_reg[0] + c_reg[1];                                         // c0 + c1
 assign d_wire[1] = (d_wire[0]>>>1) - c_reg[1];                                  // 0.5*d0 - c1
@@ -146,27 +147,38 @@ always_ff @(posedge clk) begin : stage4
   end
 end
 
-// y is purely a combinatorial output for the d registers
-assign y_out[0] = d_reg[0];
-assign y_out[1] = c_reg[7];
-assign y_out[2] = d_reg[3];
-assign y_out[3] = d_reg[6];
-assign y_out[4] = d_reg[1];
-assign y_out[5] = d_reg[5];
-assign y_out[6] = d_reg[2];
-assign y_out[7] = d_reg[4];
+// Delay c_reg[7] by one clock cycle to arrive at same time as d_reg
+logic [INTER_WIDTH-1:0] c_reg7_delay;
+
+always_ff @(posedge clk) begin : delay_c_reg
+  if (rst) begin
+    c_reg7_delay <= 1'b0;
+  end else begin
+    c_reg7_delay <= c_reg[7];
+  end
+end
 
 // Delay valid_out by one cycle to arrive at same time as y
-logic valid_out_reg;
+logic valid_out_delay;
 
-assign valid_out = valid_out_reg;
+assign valid_out = valid_out_delay;
 
 always_ff @(posedge clk) begin : delay_valid_out
   if (rst) begin
-    valid_out_reg <= 1'b0;
+    valid_out_delay <= 1'b0;
   end else begin
-    valid_out_reg <= (state == STAGE4);
+    valid_out_delay <= (state == STAGE4);
   end
 end
+
+// y is purely a combinational output for the d registers
+assign y_out[0] = {d_reg[0][INTER_WIDTH-1 -: OUT_WIDTH];
+assign y_out[1] = c_reg7_delay[INTER_WIDTH-1 -: OUT_WIDTH];
+assign y_out[2] = d_reg[3][INTER_WIDTH-1 -: OUT_WIDTH];
+assign y_out[3] = d_reg[6][INTER_WIDTH-1 -: OUT_WIDTH];
+assign y_out[4] = d_reg[1][INTER_WIDTH-1 -: OUT_WIDTH];
+assign y_out[5] = d_reg[5][INTER_WIDTH-1 -: OUT_WIDTH];
+assign y_out[6] = d_reg[2][INTER_WIDTH-1 -: OUT_WIDTH];
+assign y_out[7] = d_reg[4][INTER_WIDTH-1 -: OUT_WIDTH];
 
 endmodule

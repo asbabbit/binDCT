@@ -8,40 +8,16 @@ module fbindct_8bit #(
 )(
   input                                        clk,
   input                                        rst,
-  input signed [IN_WIDTH-1:0]                  x_in [7:0],
-  input                                        ready_in,
+  input signed [IN_WIDTH-1:0]                  x_in [7:0],      // x_in is 1/8th partition of 8x8 block
+  input                                        ready_in,        // ready_in is asserted by next mdoule once next module can accept new data
+  input                                        load,            // load is asserted once 1 partition is sent wanting to be sent by previous module
 
-  output                                       valid_out,
-  output signed [OUT_WIDTH-1:0]                y_out [7:0]
+  output                                       valid_out,       // valid_out is asserted once 4 stage pipeline is completed 
+  output signed [OUT_WIDTH-1:0]                y_out [7:0]      // y_out is the 1DCT output on 1/8th of 8x8 block
 );
 
-// Stage machine
-typedef enum logic [2:0] {
-  STAGE1 = 2'b00,
-  STAGE2 = 2'b01, 
-  STAGE3 = 2'b10,
-  STAGE4 = 2'b11
-} stage_t;
-stage_t stage;
 
-// Stage logic
-always_ff @(posedge clk) begin : stage_machine
-  if (rst) begin
-    stage <= STAGE0;
-  end else begin
-    case (stage)
-      STAGE0: stage <= STAGE1;
-      STAGE1: stage <= STAGE2;
-      STAGE2: stage <= STAGE3;
-      STAGE3: stage <= STAGE4;
-      STAGE4: stage <= STAGE0;
-      default : 
-    endcase
-  end
-end
-
-
-// FSM
+// States
 typedef enum logic [1:0] {
   IDLE,
   WAIT,
@@ -49,35 +25,62 @@ typedef enum logic [1:0] {
 } state_t;
 state_t state;
 
+// Stages
+typedef enum logic [1:0] {
+  STAGE1 = 2'b00,
+  STAGE2 = 2'b01, 
+  STAGE3 = 2'b10,
+  STAGE4 = 2'b11
+} stage_t;
+stage_t stage;
+
 // FSM logic
 logic signed [IN_WIDTH-1:0] x_reg [0:7];
-logic x_available;
+logic done;
+
+assign valid_out = done;
 
 always_ff @(posedge clk) begin : state_machine
   if (rst) begin
     state <= IDLE;
-    x_available <= 0;
+    stage <= STAGE1;
+    done <= 1'b0;
     for (int i = 0; i<8; i++) begin
       x_reg[i] <= 0;
     end
   end else begin
     case (state)
       IDLE: begin
-        if(/*some trigger*/ 1'b1) begin
+        if(load) begin
           x_reg <= x_in;
-          x_available <= 1'b1;
           state <= WAIT;
         end
       end
       WAIT: begin
-
+        case (stage)
+          STAGE1: begin 
+            stage <= STAGE2;
+            done <= 1'b0;
+          end
+          STAGE2: stage <= STAGE3;
+          STAGE3: stage <= STAGE4;
+          STAGE4: begin 
+            state <= SEND;
+            stage <= STAGE1;
+            done <=1'b1;
+          end
+          default : begin 
+            stage <= STAGE1;
+          end
+        endcase
       end
       SEND: begin
-        if(valid_out && ready_in) begin
-          x_available <= 1'b0;
+        if(ready_in) begin
+          state <= IDLE;
+          done <= 1'b0;
         end
       end
-      default :  
+      default :  state <= IDLE;
     endcase
   end
 end
@@ -102,7 +105,7 @@ always_ff @(posedge clk) begin : stage1
     for (int i = 0; i<8; i++) begin
       a_reg[i] <= 0;
     end
-  end else if(state == STAGE1) begin
+  end else if(stage == STAGE1) begin
     a_reg <= a_wire;
   end
 end
@@ -119,7 +122,7 @@ always_ff @(posedge clk) begin : stage2
     for (int i = 0; i<2; i++) begin
       b_reg[i] <= 0;
     end
-  end else if(state == STAGE2) begin
+  end else if(stage == STAGE2) begin
     b_reg <= b_wire;
   end
 end
@@ -143,7 +146,7 @@ always_ff @(posedge clk) begin : stage3
     for (int i = 0; i<8; i++) begin
       c_reg[i] <= 0;
     end
-  end else if(state == STAGE3) begin
+  end else if(stage == STAGE3) begin
     c_reg <= c_wire;
   end
 end
@@ -165,7 +168,7 @@ always_ff @(posedge clk) begin : stage4
     for (int i = 0; i<7; i++) begin
       d_reg[i] <= 0;
     end
-  end else if(state == STAGE4) begin
+  end else if(stage == STAGE4) begin
     d_reg <= d_wire; 
   end
 end
@@ -178,19 +181,6 @@ always_ff @(posedge clk) begin : delay_c_reg
     c_reg7_delay <= 1'b0;
   end else begin
     c_reg7_delay <= c_reg[7];
-  end
-end
-
-// Delay valid_out by one cycle to arrive at same time as y
-logic valid_out_delay;
-
-assign valid_out = valid_out_delay;
-
-always_ff @(posedge clk) begin : delay_valid_out
-  if (rst) begin
-    valid_out_delay <= 1'b0;
-  end else begin
-    valid_out_delay <= (state == STAGE4);
   end
 end
 
