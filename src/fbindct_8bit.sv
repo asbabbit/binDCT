@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 module fbindct_8bit #(
   parameter IN_WIDTH = 8,                                 // Data input size for Y,Cb,Cr values
-  parameter INT_BITS = 4,                                 // Bits needed to prevent overflow
+  parameter INT_BITS = 6,                                 // Bits needed to prevent overflow
   parameter FRAC_BITS = 6,                                // Bits needed for shifting
   parameter INTER_WIDTH = IN_WIDTH + INT_BITS + FRAC_BITS,// Intermediate width of wires
   parameter OUT_WIDTH = 20                                // Output width may need shortening due to hardware constraints
@@ -10,12 +10,11 @@ module fbindct_8bit #(
   input                                        rst,
   input signed [IN_WIDTH-1:0]                  x_in [7:0],      // x_in is 1/8th partition of 8x8 block
   input                                        ready_in,        // ready_in is asserted by next mdoule once next module can accept new data
-  input                                        load,            // load is asserted once 1 partition is sent wanting to be sent by previous module
+  input                                        load,            // load is asserted once 1 partition is wanting to be sent by previous module
 
   output                                       valid_out,       // valid_out is asserted once 4 stage pipeline is completed 
   output signed [OUT_WIDTH-1:0]                y_out [7:0]      // y_out is the 1DCT output on 1/8th of 8x8 block
 );
-
 
 // States
 typedef enum logic [1:0] {
