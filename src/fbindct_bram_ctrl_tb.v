@@ -47,7 +47,7 @@ module tb_fbindct_simple_waveform();
     end
     
     // Partition decode for waveform viewing
-    wire partition_raw = dut.current_partition;
+    wire partition_raw = dut.buffer;
     reg [15:0] partition_name; // 2 characters * 8 bits
     always @(*) begin
         case (partition_raw)
